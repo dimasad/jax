@@ -3441,7 +3441,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     # explicit uint64 should work
     if config.x64_enabled:
-      self.assertEqual(val, jnp.array(val, dtype='uint64'))
+      self.assertEqual(np.uint64(val), jnp.array(val, dtype='uint64'))
 
   # TODO(jakevdp): fix list inputs to jnp.array and enable the following test
   # def testArrayFromList(self):
