@@ -21,6 +21,7 @@ limitations under the License.
 #include <string>
 
 #include "absl/base/casts.h"
+#include "absl/status/statusor.h"
 
 namespace jax {
 
@@ -36,7 +37,7 @@ std::string PackDescriptorAsString(const T& descriptor) {
 
 // Unpacks a descriptor object from a byte string.
 template <typename T>
-const T* UnpackDescriptor(const char* opaque, std::size_t opaque_len) {
+absl::StatusOr<const T*> UnpackDescriptor(const char* opaque, std::size_t opaque_len) {
   if (opaque_len != sizeof(T)) {
     throw std::runtime_error("Invalid size for linalg operation descriptor.");
   }

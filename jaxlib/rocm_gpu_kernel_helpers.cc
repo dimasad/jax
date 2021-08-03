@@ -22,14 +22,14 @@ limitations under the License.
 
 namespace jax {
 
-void ThrowIfError(hipError_t error) {
+absl::Status AsStatus(hipError_t error) {
   if (error != hipSuccess) {
-    throw std::runtime_error(
-        absl::StrCat("ROCm operation failed: ", hipGetErrorString(error)));
+    return absl::InternalError(absl::StrCat("ROCm operation failed: ", hipGetErrorString(error)));
   }
+  return absl::OkStatus();
 }
 
-std::unique_ptr<void* []> MakeBatchPointers(hipStream_t stream, void* buffer,
+absl::StatusOr<std::unique_ptr<void* []>> MakeBatchPointers(hipStream_t stream, void* buffer,
                                             void* dev_ptrs, int batch,
                                             int batch_elem_size) {
   char* ptr = static_cast<char*>(buffer);
@@ -38,8 +38,9 @@ std::unique_ptr<void* []> MakeBatchPointers(hipStream_t stream, void* buffer,
     host_ptrs[i] = ptr;
     ptr += batch_elem_size;
   }
-  ThrowIfError(hipMemcpyAsync(dev_ptrs, host_ptrs.get(), sizeof(void*) * batch,
-                              hipMemcpyHostToDevice, stream));
+  JAX_RETURN_IF_ERROR(AsStatus(
+              hipMemcpyAsync(dev_ptrs, host_ptrs.get(), sizeof(void*) * batch,
+                             hipMemcpyHostToDevice, stream)));
   return host_ptrs;
 }
 }  // namespace jax
