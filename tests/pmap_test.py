@@ -541,7 +541,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
     # test that we can handle device movement on dispatch
-    y = pxla.ShardedDeviceArray(y.aval, y.sharding_spec, y.device_buffers[::-1])
+    y = pxla.make_sharded_device_array(y.aval, y.sharding_spec,
+                                       y.device_buffers[::-1])
     z = f(y)
     self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
 
@@ -1263,7 +1264,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     sharding_spec = pxla.ShardingSpec(
         sharding=map(pxla.Chunked, ([2], [2])),
         mesh_mapping=map(pxla.ShardedAxis, (0, 1)))
-    arr = pxla.ShardedDeviceArray(aval, sharding_spec, bufs)
+    arr = pxla.make_sharded_device_array(aval, sharding_spec, bufs)
 
     r = self.pmap(lambda x: x + 1)(arr)
     self.assertAllClose(r, arr + 1)
@@ -1729,6 +1730,20 @@ if config.FLAGS.experimental_cpp_pmap:
     @property
     def pmap(self):
       return src_api._cpp_pmap
+
+    def test_cpp_correctly_executed(self):
+      num_devices = jax.device_count()
+      pmaped = self.pmap(lambda x: x+1)
+      inputs = np.zeros((num_devices, 3))
+
+      # This is testing an implementation detail: there is no promise that the
+      # first call is pxla.ShardedDeviceArray (or the second) is a C++ type, but
+      # it's important to check we don't always go through the Python fallback.
+      first_outputs = pmaped(inputs)
+      self.assertEqual(type(first_outputs), pxla.pmap_lib.ShardedDeviceArray)
+
+      second_outputs = pmaped(inputs)
+      self.assertEqual(type(second_outputs), pxla.pmap_lib.ShardedDeviceArray)
 
 
 class VmapOfPmapTest(jtu.JaxTestCase):

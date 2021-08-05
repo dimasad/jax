@@ -46,6 +46,7 @@ from jax import errors
 from jax.core import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from jax.config import config
 from jax.interpreters.xla import DeviceArray, _DeviceArray, _CppDeviceArray
+from jax.interpreters import pxla
 from jax import lax
 from jax._src.lax.lax import _device_put_raw
 from jax import ops
@@ -5949,42 +5950,6 @@ _diff_methods = ["clip", "conj", "conjugate", "cumprod", "cumsum",
 argpartition = _not_implemented(np.argpartition)
 _NOT_IMPLEMENTED = ['argpartition']
 
-# Set up operator, method, and property forwarding on Tracer instances containing
-# ShapedArray avals by following the forwarding conventions for Tracer.
-# Forward operators using a single-underscore-prefix naming convention:
-for operator_name, function in _operators.items():
-  setattr(ShapedArray, "_{}".format(operator_name), staticmethod(function))
-# Forward methods and properties using core.aval_method and core.aval_property:
-for method_name in _nondiff_methods + _diff_methods:
-  setattr(ShapedArray, method_name, core.aval_method(globals()[method_name]))
-setattr(ShapedArray, "reshape", core.aval_method(_reshape))
-setattr(ShapedArray, "transpose", core.aval_method(_transpose))
-setattr(ShapedArray, "flatten", core.aval_method(ravel))
-setattr(ShapedArray, "T", core.aval_property(transpose))
-setattr(ShapedArray, "real", core.aval_property(real))
-setattr(ShapedArray, "imag", core.aval_property(imag))
-setattr(ShapedArray, "astype", core.aval_method(_astype))
-setattr(ShapedArray, "view", core.aval_method(_view))
-setattr(ShapedArray, "nbytes", core.aval_property(_nbytes))
-
-
-# Forward operators, methods, and properties on DeviceArray to lax_numpy
-# functions (with no Tracers involved; this forwarding is direct)
-for device_array in [DeviceArray]:
-  for operator_name, function in _operators.items():
-    setattr(device_array, "__{}__".format(operator_name), function)
-  for method_name in _nondiff_methods + _diff_methods:
-    setattr(device_array, method_name, globals()[method_name])
-  setattr(device_array, "reshape", _reshape)
-  setattr(device_array, "transpose", _transpose)
-  setattr(device_array, "flatten", ravel)
-  setattr(device_array, "T", property(transpose))
-  setattr(device_array, "real", property(real))
-  setattr(device_array, "imag", property(imag))
-  setattr(device_array, "astype", _astype)
-  setattr(device_array, "view", _view)
-  setattr(device_array, "nbytes", property(_nbytes))
-
 
 # Experimental support for NumPy's module dispatch with NEP-37.
 # Currently requires https://github.com/seberg/numpy-dispatch
@@ -5997,26 +5962,10 @@ def __array_module__(self, types):
   else:
     return NotImplemented
 
-setattr(ShapedArray, "_array_module", staticmethod(__array_module__))
-setattr(_DeviceArray, "__array_module__", __array_module__)
-setattr(_CppDeviceArray, "__array_module__", __array_module__)
-
-
-# Extra methods that are handy
-setattr(ShapedArray, "broadcast", core.aval_method(lax.broadcast))
-setattr(ShapedArray, "broadcast_in_dim", core.aval_method(lax.broadcast_in_dim))
-setattr(ShapedArray, "split", core.aval_method(split))
-for device_array in [_DeviceArray, _CppDeviceArray]:
-  setattr(device_array, "broadcast", lax.broadcast)
-  setattr(device_array, "broadcast_in_dim", lax.broadcast_in_dim)
-  setattr(device_array, "split", split)
 
 def _compress_method(a, condition, axis=None, out=None):
   return compress(condition, a, axis, out)
 
-setattr(ShapedArray, "compress", _compress_method)
-setattr(_DeviceArray, "compress", _compress_method)
-setattr(_CppDeviceArray, "compress", _compress_method)
 
 @partial(jit, static_argnums=(1,2,3))
 def _multi_slice(arr,
@@ -6035,8 +5984,6 @@ def _multi_slice(arr,
       sliced = lax.squeeze(sliced, removed)
     results.append(sliced)
   return results
-setattr(_DeviceArray, "_multi_slice", _multi_slice)
-setattr(_CppDeviceArray, "_multi_slice", _multi_slice)
 
 
 # Syntactic sugar for scatter operations.
@@ -6204,6 +6151,62 @@ class _IndexUpdateRef:
                                    unique_indices=unique_indices)
 
 
-setattr(_DeviceArray, "at", property(_IndexUpdateHelper))
-setattr(_CppDeviceArray, "at", property(_IndexUpdateHelper))
+# Set up operator, method, and property forwarding on Tracer instances containing
+# ShapedArray avals by following the forwarding conventions for Tracer.
+# Forward operators using a single-underscore-prefix naming convention:
+for operator_name, function in _operators.items():
+  setattr(ShapedArray, "_{}".format(operator_name), staticmethod(function))
+# Forward methods and properties using core.aval_method and core.aval_property:
+for method_name in _nondiff_methods + _diff_methods:
+  setattr(ShapedArray, method_name, core.aval_method(globals()[method_name]))
+setattr(ShapedArray, "reshape", core.aval_method(_reshape))
+setattr(ShapedArray, "transpose", core.aval_method(_transpose))
+setattr(ShapedArray, "flatten", core.aval_method(ravel))
+setattr(ShapedArray, "T", core.aval_property(transpose))
+setattr(ShapedArray, "real", core.aval_property(real))
+setattr(ShapedArray, "imag", core.aval_property(imag))
+setattr(ShapedArray, "astype", core.aval_method(_astype))
+setattr(ShapedArray, "view", core.aval_method(_view))
+setattr(ShapedArray, "nbytes", core.aval_property(_nbytes))
+
+setattr(ShapedArray, "_array_module", staticmethod(__array_module__))
+setattr(ShapedArray, "broadcast", core.aval_method(lax.broadcast))
+setattr(ShapedArray, "broadcast_in_dim", core.aval_method(lax.broadcast_in_dim))
+setattr(ShapedArray, "split", core.aval_method(split))
+setattr(ShapedArray, "compress", _compress_method)
 setattr(ShapedArray, "at", core.aval_property(_IndexUpdateHelper))
+
+
+def set_device_array_base_attributes(device_array):
+  # Forward operators, methods, and properties on DeviceArray to lax_numpy
+  # functions (with no Tracers involved; this forwarding is direct)
+  for operator_name, function in _operators.items():
+    setattr(device_array, "__{}__".format(operator_name), function)
+  for method_name in _nondiff_methods + _diff_methods:
+    setattr(device_array, method_name, globals()[method_name])
+  setattr(device_array, "reshape", _reshape)
+  setattr(device_array, "transpose", _transpose)
+  setattr(device_array, "flatten", ravel)
+  setattr(device_array, "T", property(transpose))
+  setattr(device_array, "real", property(real))
+  setattr(device_array, "imag", property(imag))
+  setattr(device_array, "astype", _astype)
+  setattr(device_array, "view", _view)
+  setattr(device_array, "nbytes", property(_nbytes))
+
+set_device_array_base_attributes(DeviceArray)
+
+
+def set_device_array_attributes(device_array):
+  setattr(device_array, "__array_module__", __array_module__)
+  # Extra methods that are handy
+  setattr(device_array, "broadcast", lax.broadcast)
+  setattr(device_array, "broadcast_in_dim", lax.broadcast_in_dim)
+  setattr(device_array, "split", split)
+  setattr(device_array, "compress", _compress_method)
+  setattr(device_array, "_multi_slice", _multi_slice)
+  setattr(device_array, "at", property(_IndexUpdateHelper))
+
+set_device_array_attributes(_DeviceArray)
+set_device_array_attributes(_CppDeviceArray)
+set_device_array_attributes(pxla.pmap_lib.ShardedDeviceArray)
